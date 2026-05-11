@@ -122,22 +122,27 @@ Important rules:
 
 def send_telegram(text: str):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    max_len = 4096
+    max_len = 4000
 
-    if len(text) <= max_len:
+    def split_text(t, size):
+        chunks = []
+        while len(t.encode("utf-8")) > size:
+            cut = size
+            encoded = t.encode("utf-8")[:cut]
+            chunk = encoded.decode("utf-8", errors="ignore")
+            chunks.append(chunk)
+            t = t[len(chunk):]
+        if t:
+            chunks.append(t)
+        return chunks
+
+    chunks = split_text(text, max_len) if len(text.encode("utf-8")) > max_len else [text]
+    for chunk in chunks:
         requests.post(url, json={
             "chat_id": TELEGRAM_CHAT_ID,
-            "text": text,
+            "text": chunk,
             "parse_mode": "HTML"
         })
-    else:
-        chunks = [text[i:i+max_len] for i in range(0, len(text), max_len)]
-        for chunk in chunks:
-            requests.post(url, json={
-                "chat_id": TELEGRAM_CHAT_ID,
-                "text": chunk,
-                "parse_mode": "HTML"
-            })
 
 
 def main():
