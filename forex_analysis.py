@@ -3,7 +3,6 @@ import json
 import requests
 import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
 from anthropic import Anthropic
 from datetime import datetime, timezone
 
@@ -21,42 +20,40 @@ SYMBOLS = {
 def get_market_data(ticker_symbol: str) -> dict:
     ticker = yf.Ticker(ticker_symbol)
     df = ticker.history(period="60d", interval="1d")
-    df_4h = ticker.history(period="20d", interval="1h")
+    df_1h = ticker.history(period="10d", interval="1h")
 
     if df.empty:
         return {}
-
-    df.ta.rsi(length=14, append=True)
-    df.ta.ema(length=20, append=True)
-    df.ta.ema(length=50, append=True)
-    df.ta.ema(length=200, append=True)
-    df.ta.macd(append=True)
 
     latest = df.iloc[-1]
     prev = df.iloc[-2]
     daily_change_pct = ((latest["Close"] - prev["Close"]) / prev["Close"]) * 100
 
-    recent_highs = df["High"].tail(20)
-    recent_lows = df["Low"].tail(20)
+    # Last 20 daily candles for structure analysis
+    daily_candles = df.tail(20)[["Open", "High", "Low", "Close"]].round(5).values.tolist()
+
+    # Last 20 hourly candles for intraday structure
+    hourly_candles = []
+    if not df_1h.empty:
+        hourly_candles = df_1h.tail(20)[["Open", "High", "Low", "Close"]].round(5).values.tolist()
+
     prev_week = df.tail(7)
+    prev_day = df.iloc[-2]
 
     return {
         "current_price": round(float(latest["Close"]), 5),
         "daily_change_pct": round(float(daily_change_pct), 3),
         "day_high": round(float(latest["High"]), 5),
         "day_low": round(float(latest["Low"]), 5),
-        "rsi_14": round(float(latest.get("RSI_14", 0)), 2),
-        "ema_20": round(float(latest.get("EMA_20", 0)), 5),
-        "ema_50": round(float(latest.get("EMA_50", 0)), 5),
-        "ema_200": round(float(latest.get("EMA_200", 0)), 5),
-        "macd": round(float(latest.get("MACD_12_26_9", 0)), 6),
-        "macd_signal": round(float(latest.get("MACDs_12_26_9", 0)), 6),
+        "prev_day_high": round(float(prev_day["High"]), 5),
+        "prev_day_low": round(float(prev_day["Low"]), 5),
+        "prev_day_close": round(float(prev_day["Close"]), 5),
         "week_high": round(float(prev_week["High"].max()), 5),
         "week_low": round(float(prev_week["Low"].min()), 5),
-        "20d_high": round(float(recent_highs.max()), 5),
-        "20d_low": round(float(recent_lows.min()), 5),
-        "last_5_closes": [round(float(x), 5) for x in df["Close"].tail(5).tolist()],
-        "volume": int(latest.get("Volume", 0)),
+        "20d_high": round(float(df["High"].tail(20).max()), 5),
+        "20d_low": round(float(df["Low"].tail(20).min()), 5),
+        "daily_candles_last20": daily_candles,
+        "hourly_candles_last20": hourly_candles,
     }
 
 
@@ -65,51 +62,54 @@ def analyze_with_claude(market_data: dict) -> str:
 
     today = datetime.now(timezone.utc).strftime("%A, %B %d, %Y")
 
-    prompt = f"""You are an expert Forex and Gold market analyst specializing in Smart Money Concepts (SMC), order flow analysis, and liquidity.
+    prompt = f"""You are a professional ICT (Inner Circle Trader) and Smart Money Concepts (SMC) trader with deep expertise in institutional order flow, liquidity engineering, and price delivery.
 
 Today is: {today}
 
-Here is the real market data collected right now:
-
+Real market data:
 {json.dumps(market_data, indent=2, ensure_ascii=False)}
 
-Perform a comprehensive professional morning analysis in PERSIAN (Farsi) language.
+Analyze each instrument using ONLY ICT/SMC methodology. Write entirely in PERSIAN (Farsi).
 
 Use this EXACT HTML format for Telegram:
 
-🌅 <b>تحلیل صبحگاهی فارکس</b>
-📅 {today} | ⏰ ۸ صبح لندن
+🌅 <b>تحلیل صبحگاهی فارکس — ICT/SMC</b>
+📅 {today} | ⏰ ۸ صبح لندن (Kill Zone)
 
 ━━━━━━━━━━━━━━━━━━━━
 
 🇪🇺 <b>EUR/USD</b> — [قیمت فعلی]
-📈 تغییر روزانه: [درصد تغییر]%
+📈 تغییر روزانه: [درصد]%
 
-🔍 روند: [Bullish/Bearish/Ranging + توضیح کوتاه]
-📊 ساختار: [HH/HL یا LH/LL + آخرین BOS/ChoCH]
-💧 لیکوییدیتی: [Equal Highs/Lows، PDH/PDL، PWH/PWL، FVG]
-🧱 اوردر بلاک: [سطح اوردر بلاک کلیدی]
-🎯 سطوح کلیدی: R: [مقاومت] | S: [حمایت]
-📉 RSI: [مقدار] | EMA20: [مقدار] | MACD: [تفسیر]
-⚡ سیگنال: [خرید/فروش/صبر] — [دلیل مختصر با entry zone و invalidation]
+📊 <b>ساختار بازار:</b> [HH/HL = Bullish | LH/LL = Bearish | آخرین BOS یا ChoCH در چه سطحی بوده]
+💧 <b>لیکوییدیتی:</b> [Buy-side liquidity (BSL) بالای چه سطحی | Sell-side liquidity (SSL) زیر چه سطحی | Equal Highs/Lows | PDH/PDL/PWH/PWL]
+🧱 <b>اوردر بلاک:</b> [آخرین Bullish OB یا Bearish OB با سطح دقیق | آیا قیمت در حال بازگشت به آن است]
+⚖️ <b>FVG / Imbalance:</b> [وجود Fair Value Gap با سطح دقیق | پر شده یا نشده]
+🎯 <b>سطوح کلیدی:</b> مقاومت: [سطح] | حمایت: [سطح]
+⚡ <b>سناریوی ICT:</b> [خرید/فروش/صبر] — [entry zone دقیق | چه trigger لازم است (BOS، ChoCH، Displacement) | invalidation level]
 
 [همین ساختار برای GBP/USD با 🇬🇧، XAU/USD با 🥇، DXY با 💵]
 
 ━━━━━━━━━━━━━━━━━━━━
 
-🧠 <b>جمع‌بندی کلی:</b>
-[۲-۳ جمله: sentiment کلی بازار، تأثیر DXY روی سایر جفت‌ها، رویدادهای مهم روز]
+🧠 <b>جمع‌بندی SMC:</b>
+[۲-۳ جمله: جهت کلی Smart Money، رابطه DXY با جفت‌ارزها (Inverse/Direct correlation)، کدام لیکوییدیتی احتمالاً هدف بعدی است]
 
 ⚠️ <i>این تحلیل صرفاً جهت اطلاع است و توصیه مالی نمی‌باشد.</i>
 
-Important rules:
-- Write ALL text in Persian/Farsi except symbol names and numbers
-- Use actual numbers from the market data provided
-- Identify liquidity zones from the 20-day high/low and weekly high/low data
-- If EMA20 > EMA50 > EMA200: bullish trend; reverse = bearish
-- RSI > 70: overbought, RSI < 30: oversold
-- MACD > signal line: bullish momentum
-- Be specific and actionable, not generic"""
+ICT/SMC Analysis Rules:
+- Use daily_candles_last20 to identify market structure (swing highs/lows, BOS, ChoCH)
+- Use hourly_candles_last20 for intraday OB and FVG identification
+- PDH = prev_day_high, PDL = prev_day_low (key liquidity levels)
+- PWH = week_high, PWL = week_low (premium/discount weekly range)
+- 20d_high / 20d_low = major buy-side / sell-side liquidity pools
+- Bullish OB: last bearish candle before a strong bullish displacement
+- Bearish OB: last bullish candle before a strong bearish displacement
+- FVG: three-candle pattern where the wicks don't overlap (imbalance)
+- Price in Premium (above 50% of range) = look for sells | Price in Discount (below 50%) = look for buys
+- London Kill Zone = 7:00-10:00 AM London time (current session)
+- DO NOT mention RSI, MACD, or any retail indicators
+- Be specific with exact price levels, not ranges where possible"""
 
     message = client.messages.create(
         model="claude-sonnet-4-6",
@@ -160,7 +160,7 @@ def main():
         send_telegram("⚠️ خطا در دریافت داده‌های بازار. لطفاً بعداً بررسی کنید.")
         return
 
-    print("🤖 Analyzing with Claude...")
+    print("🤖 Analyzing with Claude (ICT/SMC)...")
     analysis = analyze_with_claude(all_data)
 
     print("📬 Sending to Telegram...")
