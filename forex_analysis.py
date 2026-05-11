@@ -19,26 +19,29 @@ SYMBOLS = {
 
 def get_market_data(ticker_symbol: str) -> dict:
     ticker = yf.Ticker(ticker_symbol)
-    df = ticker.history(period="60d", interval="1d")
-    df_1h = ticker.history(period="10d", interval="1h")
+    df_1d  = ticker.history(period="60d",  interval="1d")
+    df_1h  = ticker.history(period="10d",  interval="1h")
+    df_15m = ticker.history(period="5d",   interval="15m")
 
-    if df.empty:
+    if df_1d.empty:
         return {}
 
-    latest = df.iloc[-1]
-    prev = df.iloc[-2]
+    latest = df_1d.iloc[-1]
+    prev   = df_1d.iloc[-2]
     daily_change_pct = ((latest["Close"] - prev["Close"]) / prev["Close"]) * 100
 
-    # Last 20 daily candles for structure analysis
-    daily_candles = df.tail(20)[["Open", "High", "Low", "Close"]].round(5).values.tolist()
+    prev_week = df_1d.tail(7)
+    prev_day  = df_1d.iloc[-2]
 
-    # Last 20 hourly candles for intraday structure
+    daily_candles = df_1d.tail(20)[["Open", "High", "Low", "Close"]].round(5).values.tolist()
+
     hourly_candles = []
     if not df_1h.empty:
-        hourly_candles = df_1h.tail(20)[["Open", "High", "Low", "Close"]].round(5).values.tolist()
+        hourly_candles = df_1h.tail(30)[["Open", "High", "Low", "Close"]].round(5).values.tolist()
 
-    prev_week = df.tail(7)
-    prev_day = df.iloc[-2]
+    m15_candles = []
+    if not df_15m.empty:
+        m15_candles = df_15m.tail(30)[["Open", "High", "Low", "Close"]].round(5).values.tolist()
 
     return {
         "current_price": round(float(latest["Close"]), 5),
@@ -50,10 +53,11 @@ def get_market_data(ticker_symbol: str) -> dict:
         "prev_day_close": round(float(prev_day["Close"]), 5),
         "week_high": round(float(prev_week["High"].max()), 5),
         "week_low": round(float(prev_week["Low"].min()), 5),
-        "20d_high": round(float(df["High"].tail(20).max()), 5),
-        "20d_low": round(float(df["Low"].tail(20).min()), 5),
-        "daily_candles_last20": daily_candles,
-        "hourly_candles_last20": hourly_candles,
+        "20d_high": round(float(df_1d["High"].tail(20).max()), 5),
+        "20d_low": round(float(df_1d["Low"].tail(20).min()), 5),
+        "daily_candles_last20":  daily_candles,
+        "hourly_candles_last30": hourly_candles,
+        "m15_candles_last30":    m15_candles,
     }
 
 
@@ -62,54 +66,67 @@ def analyze_with_claude(market_data: dict) -> str:
 
     today = datetime.now(timezone.utc).strftime("%A, %B %d, %Y")
 
-    prompt = f"""You are a professional ICT (Inner Circle Trader) and Smart Money Concepts (SMC) trader with deep expertise in institutional order flow, liquidity engineering, and price delivery.
+    prompt = f"""You are a professional ICT (Inner Circle Trader) and Smart Money Concepts (SMC) trader with deep expertise in institutional order flow, liquidity engineering, and multi-timeframe price delivery.
 
 Today is: {today}
 
-Real market data:
+Real market data (includes Daily, 1H, and 15M candles):
 {json.dumps(market_data, indent=2, ensure_ascii=False)}
 
-Analyze each instrument using ONLY ICT/SMC methodology. Write entirely in PERSIAN (Farsi).
+Analyze each instrument using ONLY ICT/SMC methodology across 3 timeframes. Write entirely in PERSIAN (Farsi).
 
 Use this EXACT HTML format for Telegram:
 
 🌅 <b>تحلیل صبحگاهی فارکس — ICT/SMC</b>
-📅 {today} | ⏰ ۸ صبح لندن (Kill Zone)
+📅 {today} | ⏰ ۸ صبح لندن (London Kill Zone)
 
 ━━━━━━━━━━━━━━━━━━━━
 
-🇪🇺 <b>EUR/USD</b> — [قیمت فعلی]
-📈 تغییر روزانه: [درصد]%
+🇪🇺 <b>EUR/USD</b> — [قیمت فعلی] | تغییر: [درصد]%
 
-📊 <b>ساختار بازار:</b> [HH/HL = Bullish | LH/LL = Bearish | آخرین BOS یا ChoCH در چه سطحی بوده]
-💧 <b>لیکوییدیتی:</b> [Buy-side liquidity (BSL) بالای چه سطحی | Sell-side liquidity (SSL) زیر چه سطحی | Equal Highs/Lows | PDH/PDL/PWH/PWL]
-🧱 <b>اوردر بلاک:</b> [آخرین Bullish OB یا Bearish OB با سطح دقیق | آیا قیمت در حال بازگشت به آن است]
-⚖️ <b>FVG / Imbalance:</b> [وجود Fair Value Gap با سطح دقیق | پر شده یا نشده]
-🎯 <b>سطوح کلیدی:</b> مقاومت: [سطح] | حمایت: [سطح]
-⚡ <b>سناریوی ICT:</b> [خرید/فروش/صبر] — [entry zone دقیق | چه trigger لازم است (BOS، ChoCH، Displacement) | invalidation level]
+📅 <b>روزانه (HTF Bias):</b>
+  • ساختار: [HH/HL یا LH/LL | آخرین BOS/ChoCH با سطح دقیق]
+  • لیکوییدیتی: [BSL بالای X | SSL زیر Y | PDH/PDL | PWH/PWL]
+  • پرمیوم/دیسکانت: [قیمت در کدام ناحیه است نسبت به رنج هفتگی]
+
+⏱ <b>یک‌ساعته (Execution TF):</b>
+  • ساختار: [جهت ساختار 1H | BOS/ChoCH اخیر]
+  • اوردر بلاک: [Bullish/Bearish OB با سطح دقیق | وضعیت قیمت نسبت به آن]
+  • FVG: [سطح Fair Value Gap | پر شده یا نشده]
+
+⏰ <b>۱۵ دقیقه (Entry TF):</b>
+  • ساختار: [جهت ساختار 15M]
+  • اوردر بلاک / FVG: [نزدیک‌ترین سطح برای ورود]
+  • وضعیت فعلی: [قیمت در حال رسیدن به OB/FVG یا دور شدن]
+
+⚡ <b>سناریوی ICT:</b> [خرید/فروش/صبر]
+  • Entry Zone: [سطح دقیق]
+  • Trigger: [BOS در 15M | ChoCH | Displacement + FVG]
+  • Target: [نزدیک‌ترین لیکوییدیتی مقابل]
+  • Invalidation: [سطح باطل‌شدن]
 
 [همین ساختار برای GBP/USD با 🇬🇧، XAU/USD با 🥇، DXY با 💵]
 
 ━━━━━━━━━━━━━━━━━━━━
 
 🧠 <b>جمع‌بندی SMC:</b>
-[۲-۳ جمله: جهت کلی Smart Money، رابطه DXY با جفت‌ارزها (Inverse/Direct correlation)، کدام لیکوییدیتی احتمالاً هدف بعدی است]
+[۲-۳ جمله: Bias کلی HTF، رابطه DXY با جفت‌ارزها، کدام لیکوییدیتی هدف اصلی Smart Money است امروز]
 
 ⚠️ <i>این تحلیل صرفاً جهت اطلاع است و توصیه مالی نمی‌باشد.</i>
 
-ICT/SMC Analysis Rules:
-- Use daily_candles_last20 to identify market structure (swing highs/lows, BOS, ChoCH)
-- Use hourly_candles_last20 for intraday OB and FVG identification
-- PDH = prev_day_high, PDL = prev_day_low (key liquidity levels)
-- PWH = week_high, PWL = week_low (premium/discount weekly range)
-- 20d_high / 20d_low = major buy-side / sell-side liquidity pools
-- Bullish OB: last bearish candle before a strong bullish displacement
-- Bearish OB: last bullish candle before a strong bearish displacement
-- FVG: three-candle pattern where the wicks don't overlap (imbalance)
-- Price in Premium (above 50% of range) = look for sells | Price in Discount (below 50%) = look for buys
-- London Kill Zone = 7:00-10:00 AM London time (current session)
-- DO NOT mention RSI, MACD, or any retail indicators
-- Be specific with exact price levels, not ranges where possible"""
+Multi-Timeframe ICT Rules:
+- daily_candles_last20: HTF bias — swing highs/lows, BOS, ChoCH, premium/discount
+- hourly_candles_last30: execution — OB, FVG, liquidity sweeps
+- m15_candles_last30: entry refinement — OB/FVG entry, BOS confirmation
+- Top-down: Daily bias → 1H setup → 15M entry (never trade against Daily bias)
+- PDH/PDL = prev_day_high/low (most important intraday liquidity)
+- PWH/PWL = week_high/low (major weekly liquidity targets)
+- 20d_high/low = institutional liquidity pools (swing targets)
+- Premium = above 50% of daily/weekly range → look for sells
+- Discount = below 50% → look for buys
+- London Kill Zone = 7:00-10:00 AM London (current session — highest probability)
+- DO NOT mention RSI, MACD, EMA, or any retail indicators
+- Give exact price levels, not vague ranges"""
 
     message = client.messages.create(
         model="claude-sonnet-4-6",
