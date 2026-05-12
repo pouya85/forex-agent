@@ -1,9 +1,7 @@
 name: Daily Forex Analysis
 
 on:
-  schedule:
-    - cron: '0 8 * * 1-5'  # 8 AM UTC (Mon-Fri) = 8 AM London GMT / 9 AM BST
-  workflow_dispatch:         # Allow manual run from GitHub
+  workflow_dispatch:         # Manual run only (scheduled analysis disabled)
 
 jobs:
   analyze:
